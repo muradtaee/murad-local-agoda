@@ -16,7 +16,7 @@ label{display:flex;flex-direction:column;gap:4px;color:var(--mute);font-size:12p
 .st-booked{color:var(--ok)}.st-canceled{color:var(--bad)}.st-pending,.st-held{color:var(--acc)}
 </style></head><body><main>
 <h1>Fake supplier control</h1>
-<p class="sub">Changes apply immediately. They reset when the service sleeps or restarts, so use “Re-apply my saved setup” after waking it.</p>
+<p class="sub">Changes apply immediately and are saved on the server, so they survive a restart. “Re-apply my saved setup” is still there as a browser-side backup if you ever need it.</p>
 
 <div class="card"><h2>Global settings</h2><div class="grid">
 <label>Tax % added to every price<input id="tax_percent" type="number" step="0.01"></label>
@@ -44,8 +44,13 @@ label{display:flex;flex-direction:column;gap:4px;color:var(--mute);font-size:12p
 <script>
 let SC={}, S={};
 const $=id=>document.getElementById(id);
+// This page's own URL may be served straight at site root ("/__admin/ui")
+// or reverse-proxied behind a prefix (e.g. "/test-supplier/__admin/ui") — BASE
+// makes every API call below resolve against whichever is actually in front
+// of it, with no separate config needed.
+const BASE=location.pathname.replace(/\/__admin\/ui$/,'');
 function toast(t){const m=$('msg');m.textContent=t;m.style.opacity=1;setTimeout(()=>m.style.opacity=0,1800)}
-async function api(path,opt={}){const r=await fetch(path,{headers:{'Content-Type':'application/json'},...opt});if(!r.ok)throw new Error(await r.text());return r.json()}
+async function api(path,opt={}){const r=await fetch(BASE+path,{headers:{'Content-Type':'application/json'},...opt});if(!r.ok)throw new Error(await r.text());return r.json()}
 function opts(sel){return Object.entries(SC).map(([k,v])=>`<option value="${k}" ${k===sel?'selected':''}>${v}</option>`).join('')}
 function remember(){try{localStorage.setItem('fakeSupplierSetup',JSON.stringify({settings:S.settings,properties:S.properties}))}catch(e){}}
 async function load(){

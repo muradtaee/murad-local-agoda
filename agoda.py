@@ -6,9 +6,11 @@ Credential URLs: base_url .../api/v4/  ratecheck_url .../api/v2/  booking_url ..
 Control panel: /__admin/ui
 """
 import asyncio
+import json
 import os
 import random
 import re
+import threading
 import time
 from collections import deque
 from datetime import date, datetime, timedelta, timezone
@@ -27,6 +29,37 @@ S = {  # live settings (control panel)
     "nrf_cancel": "refuse",
     "only_listed": True,
 }
+
+# ---------------- persistence (hotels/settings/bookings survive a restart) ----------------
+DATA_DIR = os.getenv("DATA_DIR", "data")
+STATE_PATH = os.path.join(DATA_DIR, "state.json")
+_SAVE_LOCK = threading.Lock()
+
+
+def _load_state():
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+    PROPERTIES.update(saved.get("properties", {}))
+    S.update(saved.get("settings", {}))
+    for bid_str, b in saved.get("bookings", {}).items():
+        BOOKINGS[int(bid_str)] = b
+
+
+def _save_state():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    payload = {
+        "properties": PROPERTIES,
+        "settings": S,
+        "bookings": {str(bid): booking_view(b) for bid, b in BOOKINGS.items()},
+    }
+    tmp_path = f"{STATE_PATH}.tmp-{os.getpid()}"
+    with _SAVE_LOCK:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        os.replace(tmp_path, STATE_PATH)
 
 SCENARIOS = {
     "CONFIRM": "Will Confirm",
@@ -50,6 +83,8 @@ PROPERTIES = {}
 BOOKINGS = {}
 LOG = deque(maxlen=500)
 SEARCHES = deque(maxlen=3000)
+
+_load_state()
 
 
 def prop(pid):
@@ -194,6 +229,7 @@ def new_booking(details, customer, status):
          "supplierReference": f"MOCK{bid}", "hotelConfirmationNumber": f"HCN{bid}",
          "_confirm_at": None}
     BOOKINGS[bid] = b
+    _save_state()
     return b
 
 
@@ -225,6 +261,7 @@ async def book(request: Request):
 def refresh(b):
     if b.get("_confirm_at") and time.time() >= b["_confirm_at"] and b["status"] == "BookingReceived":
         b["status"], b["_confirm_at"] = "BookingConfirmed", None
+        _save_state()
     return b
 
 
@@ -260,6 +297,7 @@ async def cancel(request: Request):
     nights = max((date.fromisoformat(b["checkOut"]) - date.fromisoformat(b["checkIn"])).days, 1)
     refund = 0 if nrf else r2(float(b["rate"]["inclusive"] or 0) * nights * int(b["rooms"] or 1))
     b["_cancel_ref"] = random.randint(10**6, 10**7)
+    _save_state()
     return {"cancellationSummary": {"reference": b["_cancel_ref"],
                                     "refundRate": [{"currency": b["rate"]["currency"], "inclusive": refund}]}}
 
@@ -271,6 +309,7 @@ async def confirm_cancel(request: Request):
     if not b:
         return err("Booking not found", 404, "1")
     b["status"] = "BookingCancelledByCustomer"
+    _save_state()
     return {}
 
 
@@ -305,6 +344,7 @@ async def set_settings(request: Request):
         S["nrf_cancel"] = b["nrf_cancel"]
     if "only_listed" in b:
         S["only_listed"] = bool(b["only_listed"])
+    _save_state()
     return S
 
 
@@ -314,12 +354,14 @@ async def set_property(pid: str, request: Request):
     if b.get("scenario") not in SCENARIOS:
         return JSONResponse({"error": f"scenario must be one of {list(SCENARIOS)}"}, status_code=400)
     PROPERTIES[pid] = {"scenario": b["scenario"], "price": b.get("price", prop(pid)["price"])}
+    _save_state()
     return {pid: {**PROPERTIES[pid], "label": label(pid)}}
 
 
 @app_inner.delete("/__admin/properties/{pid}")
 async def remove_property(pid: str):
     PROPERTIES.pop(pid, None)
+    _save_state()
     return {"ok": True}
 
 
@@ -331,6 +373,7 @@ async def set_status(key: str, request: Request):
     hits = [b for b in BOOKINGS.values() if key in (str(b["id"]), b["tag"])]
     for b in hits:
         b["status"], b["_confirm_at"] = TO_AGODA[st], None
+    _save_state()
     return [booking_view(b) for b in hits]
 
 
@@ -354,6 +397,7 @@ async def admin_log(path: str = "", limit: int = 100):
 @app_inner.post("/__admin/reset")
 async def reset():
     PROPERTIES.clear(); BOOKINGS.clear(); LOG.clear(); SEARCHES.clear()
+    _save_state()
     return {"ok": True}
 
 
