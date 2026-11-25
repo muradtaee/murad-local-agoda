@@ -31,7 +31,9 @@ label{display:flex;flex-direction:column;gap:4px;color:var(--mute);font-size:12p
 <div class="card"><h2>Hotels</h2>
 <p class="sub">Price = per room per night, in the search currency. Total = price × (1 + tax %) × nights × rooms.</p>
 <div class="wrap"><table><thead><tr><th>Property id</th><th>Scenario</th><th>Price / night</th><th>Example: 1 room, 1 night</th><th></th></tr></thead><tbody id="hotels"></tbody></table></div>
-<p class="row" style="margin:14px 0 0"><input id="newId" placeholder="Any property id, e.g. 12345"><button onclick="addHotel()">Add hotel</button></p></div>
+<p class="row" style="margin:14px 0 0"><input id="newId" placeholder="Any property id, e.g. 12345"><button onclick="addHotel()">Add hotel</button></p>
+<p class="row" style="margin:10px 0 0"><button class="pri" onclick="saveAllHotels()">Save all</button></p>
+<p class="row" style="margin:10px 0 0"><input id="bulkPrice" type="number" step="0.01" min="0" placeholder="Price for every hotel"><button class="pri" onclick="setAllPrices()">Set all to this price &amp; save</button></p></div>
 
 <div class="card"><h2>Bookings</h2><div class="wrap"><table><thead><tr><th>Itinerary</th><th>Booking ref</th><th>Hotel</th><th>Room status</th><th>Set status</th></tr></thead><tbody id="bookings"></tbody></table></div>
 <p class="row" style="margin:14px 0 0"><button onclick="load()">Refresh</button></p></div>
@@ -79,6 +81,19 @@ async function saveHotel(id){
   const tr=document.querySelector(`tr[data-id="${id}"]`);
   await api('/__admin/properties/'+encodeURIComponent(id),{method:'POST',body:JSON.stringify({scenario:tr.querySelector('.sc').value,price:Number(tr.querySelector('.pr').value)})});
   await load();remember();toast('Hotel '+id+' saved');
+}
+async function saveAllHotels(){
+  const rows=[...document.querySelectorAll('#hotels tr[data-id]')];
+  if(!rows.length)return toast('No hotels to save');
+  await Promise.all(rows.map(tr=>api('/__admin/properties/'+encodeURIComponent(tr.dataset.id),
+    {method:'POST',body:JSON.stringify({scenario:tr.querySelector('.sc').value,price:Number(tr.querySelector('.pr').value)})})));
+  await load();remember();toast(`Saved ${rows.length} hotel(s)`);
+}
+async function setAllPrices(){
+  const price=Number($('bulkPrice').value);
+  if(!(price>=0))return toast('Enter a valid price first');
+  document.querySelectorAll('#hotels .pr').forEach(el=>el.value=price);
+  await saveAllHotels();
 }
 async function addHotel(){
   const id=$('newId').value.trim();if(!/^\d+$/.test(id))return toast('Property id must be digits');
